@@ -1,4 +1,4 @@
-# Game_of_Throne
+# Game of Throne
 ## Introduction
 Game of Thrones is the most popular American fantasy television series, an adoption from the famous novel, A Song of Ice and Fire by George R. R. Martin. The setting is a medieval time where people from the seven kingdoms of Westeros and the continent of Essos fought for power and life. The characters are diverse grounds, houses, and culture. The intertwined plots made the stories so appealing and surprising that people start pondering which characters would survive in the dragon’s fire and who would stand last on the battlefield. If you were a character in Game of Thrones, would you survive in given circumstances such as alleged house and social relation? If not, what you should do to increase the chance of living?
 
