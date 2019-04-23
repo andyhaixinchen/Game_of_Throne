@@ -1,0 +1,856 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Mar 21 14:12:18 2019
+
+@author: Andy Chen
+"""
+
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+import statsmodels.formula.api as smf
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import RandomizedSearchCV
+from sklearn.model_selection import cross_val_score
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import confusion_matrix
+from sklearn.preprocessing import StandardScaler
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.metrics import roc_auc_score
+
+
+pd.set_option('display.max_columns', 100)
+pd.set_option('display.max_rows', 100)
+file = 'GOT_character_predictions.xlsx'
+df = pd.read_excel(file)
+
+
+################################################################################
+####################### Exploratory Data Analysis #############################
+################################################################################
+
+df.shape
+df.columns
+df.describe()
+df.info()
+
+df.title.value_counts().head(10)
+df.culture.value_counts().head(15) 
+df.house.value_counts().head(15)
+
+
+
+########################## flaws and typos ##############################
+#############################################################################
+
+df.loc[df.name == 'Rhaego','dateOfBirth'] = df.dateOfBirth.median()
+df.loc[df.name == 'Doreah','dateOfBirth'] = df.dateOfBirth.median()
+df.loc[df.name == 'Rhaego','age'] = df.age.median()
+df.loc[df.name == 'Doreah','age'] = df.age.median()
+df.loc[df.title == '[1]', 'title'] = str('Captain') # Groleo has a captain title
+df.loc[df.name == 'Joffrey Baratheon', 'house'] = str("House Baratheon of King's Landing")
+df.rename(index = str, columns = {'S.No': 's_no'}, inplace = True)
+
+
+
+
+####################### missing values #####################################
+##############################################################################
+
+
+## impute with median
+df['dateOfBirth'] = df['dateOfBirth'].fillna(df['dateOfBirth'].median())
+df['age'] = df['age'].fillna(df['age'].median())
+
+
+## impute the rest with -1
+null_col = df.loc[:, df.isnull().any()].isnull().sum()
+print(null_col)
+
+
+for col in null_col.index.values:
+    df[col] = df[col].fillna(str(-1))
+    
+    
+print(df.isnull().sum().sum()) # check if any missing values still remains
+
+
+
+## change values in house, culture, title into lowercase
+cate_to_lala = ['house','culture','title']
+for col in cate_to_lala:
+    df[col] = df[col].map(lambda x: x.lower())
+    
+
+## correlations
+corr_alive = pd.DataFrame(df.corr()['isAlive'].round(2))
+corr_alive = corr_alive.reindex(corr_alive.isAlive.abs().sort_values(ascending = False).index)
+print(corr_alive)
+
+
+
+####################### plot #####################################
+##############################################################################
+
+
+## pairplot
+df_pair = df.loc[:,['s_no','dateOfBirth','age','numDeadRelations','popularity','isAlive']]
+sns.pairplot(df_pair)
+plt.tight_layout()
+plt.savefig('pairplot.png')
+plt.show()
+
+
+## boxplot    
+fig = plt.figure()
+
+plt.subplot(2, 2, 1)
+plt.boxplot(df['dateOfBirth'], 'r')
+plt.title('Boxplot for dateOfBirth')
+
+plt.subplot(2, 2, 2)
+plt.boxplot(df['age'], 'b')
+plt.title('Boxplot for age')
+
+plt.subplot(2, 2, 3)
+plt.boxplot(df['numDeadRelations'], 'y')
+plt.title('Boxplot for numDeadRelations')
+
+plt.subplot(2, 2, 4)
+plt.boxplot(df['popularity'], 'g')
+plt.title('Boxplot for popularity')
+
+plt.tight_layout()
+plt.savefig('GOT_boxplots.png')
+plt.show()
+    
+
+
+plt.boxplot(df['s_no'])
+plt.show()   
+ 
+
+ 
+
+## histogram
+fig = plt.figure()
+
+plt.subplot(2, 2, 1)
+plt.hist(df['dateOfBirth'])
+plt.title('Histogram for dateOfBirth')
+
+plt.subplot(2, 2, 2)
+plt.hist(df['age'])
+plt.title('Histogram for age')
+
+plt.subplot(2, 2, 3)
+plt.hist(df['numDeadRelations'])
+plt.title('Histogram for numDeadRelations')
+
+plt.subplot(2, 2, 4)
+plt.hist(df['popularity'])
+plt.title('Histogram for popularity')
+
+plt.tight_layout()
+plt.savefig('GOT_histogram.png')
+plt.show()
+
+
+plt.hist(df['s_no'])
+plt.title('Histogram for S.No')
+plt.show()
+
+
+
+####################### Feature Transformation #############################
+##############################################################################
+
+
+## create subset with only alive characters
+alive_df = df[df.isAlive == 1]
+
+popular_char = df.loc[:,['name','popularity']].sort_values(ascending = False, by = 'popularity')[:25].round(2)
+print(popular_char)
+
+
+###############################################################################
+
+""" super_name represents main characters, based on screen time in the Game of Thrones 
+For more info, go to https://winteriscoming.net/2017/11/16/data-analysis-reveals-game-of-thrones-main-character/
+"""
+super_name = pd.Series([
+                   'Jon Snow',
+                   'Tyrion Lannister',
+                   'Daenerys Targaryen (daughter of Aegon IV)',
+                   'Sansa Stark',
+                   'Cersei Lannister',
+                   'Arya Stark',
+                   'Jaime Lannister',
+                   'Samwell Tarly',
+                   'Jorah Mormont',
+                   'Theon Greyjoy',
+                   'Petyr Baelish',
+                   'Gregor Clegane',
+                   'Joffrey Baratheon',
+                   'Sandor Clegane',
+                   'Eddard Stark'
+                   ])
+    
+super_house =  pd.Series(alive_df.house.value_counts()[1:16].index.values)
+super_culture =  pd.Series(alive_df.culture.value_counts()[1:16].index.values)
+super_title =  pd.Series(alive_df.title.value_counts()[1:16].index.values)
+
+df['super_name'] = df['name'].apply(lambda x: ','.join([i for i in super_name if i in x]))
+df['super_house'] = df['house'].apply(lambda x: ','.join([i for i in super_house if i in x]))
+df['super_culture'] = df['culture'].apply(lambda x: ','.join([i for i in super_culture if i in x]))
+df['super_title'] = df['title'].apply(lambda x: ','.join([i for i in super_title if i in x]))
+
+
+
+###############################################################################
+
+# culture_alive is based on top 15 culture by survival rate (# of alive/ total number)
+a1 = pd.Series(df.culture.value_counts(), name='overall_culture_count')
+b1 = pd.Series(alive_df.culture.value_counts(),name = 'alive_culture_count')
+c1 = pd.concat([a1,b1], axis=1, join_axes=[a1.index])
+c1['alive_rate_culture'] = (c1['alive_culture_count']/c1['overall_culture_count']).round(2)
+df['alive_rate_culture'] = df['culture'].map(c1['alive_rate_culture'])
+
+ac = df.loc[df['alive_rate_culture']>0.5, 'alive_rate_culture'].count()
+dfc = c1.loc[c1['alive_rate_culture']>0.5, 'alive_rate_culture'].count()
+
+
+
+print(f"""
+      {ac} characters more a culture_alive_rate higher than 0.5
+
+      {dfc} characters more a culture_alive_rate higher than 0.5
+      """)
+
+
+
+# title_alive
+a2 = pd.Series(df.title.value_counts(), name='overall_title_count')
+b2 = pd.Series(alive_df.title.value_counts(),name = 'alive_title_count')
+c2 = pd.concat([a2,b2], axis=1, join_axes=[a2.index])
+c2['alive_rate_title'] = (c2['alive_title_count']/c2['overall_title_count']).round(2)
+df['alive_rate_title'] = df['title'].map(c2['alive_rate_title'])
+
+at = df.loc[df['alive_rate_title']>0.5, 'alive_rate_title'].count()
+dft = c2.loc[c2['alive_rate_title']>0.5, 'alive_rate_title'].count()
+
+
+print(f"""
+      {at} characters more a culture_alive_rate higher than 0.5
+
+      {dft} characters more a culture_alive_rate higher than 0.5
+      """)
+
+
+# house_alive
+a3 = pd.Series(df.house.value_counts(), name='overall_house_count')
+b3 = pd.Series(alive_df.house.value_counts(),name = 'alive_house_count')
+c3 = pd.concat([a3,b3], axis=1, join_axes=[a3.index])
+c3['alive_rate_house'] = (c3['alive_house_count']/c3['overall_house_count']).round(2)
+df['alive_rate_house'] = df['house'].map(c3['alive_rate_house'])
+
+ah = df.loc[df['alive_rate_house']>0.5, 'alive_rate_house'].count()
+dfh = c3.loc[c3['alive_rate_house']>0.5, 'alive_rate_house'].count()
+
+
+print(f"""
+      {ah} characters more a culture_alive_rate higher than 0.5
+
+      {dfh} characters more a culture_alive_rate higher than 0.5
+      """)
+
+
+
+################################################################################
+
+## total appearance
+df['total_app'] = df['book1_A_Game_Of_Thrones'] + df['book2_A_Clash_Of_Kings'] + df['book3_A_Storm_Of_Swords'] + df['book4_A_Feast_For_Crows'] + df['book5_A_Dance_with_Dragons']
+
+df_noshow = df[df['total_app'] == 0]
+
+
+print(f"""for characters never show up:
+    \n{df_noshow['isAlive'].value_counts()}
+    """)
+
+
+
+################################################################################
+
+## super_relation
+df['super_relation'] = df['mother'].map(super_name)
+df['super_relation'] = df['father'].map(super_name)
+df['super_relation'] = df['heir'].map(super_name)
+df['super_relation'] = df['spouse'].map(super_name)
+
+
+print(df['super_relation'].value_counts())
+
+
+del df['super_relation']
+
+""" 
+No names from super_name appear in mother, father, heir, spouse, so no values created.
+Delete the new variable.
+"""
+
+
+
+##############################################################################
+# create dummy variables
+dumname = pd.get_dummies(df['super_name'], drop_first=True)
+dumhouse = pd.get_dummies(df['super_house'], drop_first=True)
+dumculture = pd.get_dummies(df['super_culture'], drop_first=True)
+dumtitle = pd.get_dummies(df['super_title'], drop_first=True)
+df = pd.concat([df,dumname,dumhouse,dumculture,dumtitle],axis=1)
+
+
+# transform super + name, house, culture, title into binary
+one = [1]*15
+super_name_dict = dict(zip(super_name, one))
+df['super_name'] = df['super_name'].map(super_name_dict)
+df['super_name'] = df['super_name'].fillna(0)  
+            
+
+super_house_dict = dict(zip(super_house, one))
+df['super_house'] = df['super_house'].map(super_house_dict)
+df['super_house'] = df['super_house'].fillna(0)  
+
+
+super_culture_dict = dict(zip(super_culture, one))
+df['super_culture'] = df['super_culture'].map(super_culture_dict)
+df['super_culture'] = df['super_culture'].fillna(0)  
+
+
+super_title_dict = dict(zip(super_title, one))
+df['super_title'] = df['super_title'].map(super_title_dict)
+df['super_title'] = df['super_title'].fillna(0)  
+
+
+
+################################## More EDA #####################################
+###############################################################################
+
+## more correlation
+corr_alive_1 = pd.DataFrame(df.corr()['isAlive'].round(2))
+corr_alive_1 = corr_alive_1.reindex(corr_alive_1.abs().sort_values(ascending = False, by = 'isAlive').index)
+print(corr_alive_1)
+
+
+
+## check if any missing values still remains
+print(df.isnull().sum().any())   
+
+
+## impute missing values
+print(df.isnull().sum().sort_values(ascending = False))
+
+df['alive_rate_culture'] = df['alive_rate_culture'].fillna(int(0))
+df['alive_rate_title'] = df['alive_rate_title'].fillna(int(0))
+df['alive_rate_house'] = df['alive_rate_house'].fillna(int(0))
+
+
+## check if still missing values
+print(df.isnull().sum().any().astype('int'))
+
+
+
+################################################################################                    
+############################## Stats Model ####################################
+
+lm = smf.logit(formula = """isAlive ~ s_no +
+                                     male +
+                                     dateOfBirth +
+                                     book1_A_Game_Of_Thrones +
+                                     book2_A_Clash_Of_Kings +
+                                     book3_A_Storm_Of_Swords +
+                                     book4_A_Feast_For_Crows +
+                                     book5_A_Dance_with_Dragons +
+                                     isAliveMother +
+                                     isAliveFather +
+                                     isAliveHeir +
+                                     isAliveSpouse +
+                                     isMarried +
+                                     isNoble +
+                                     age +
+                                     numDeadRelations +
+                                     popularity +
+                                     super_name +
+                                     super_house + 
+                                     super_culture + 
+                                     super_title + 
+                                     alive_rate_culture + 
+                                     alive_rate_title + 
+                                     alive_rate_house + 
+                                     total_app
+                                     """, data = df)
+
+
+lm_result = lm.fit()
+report_lm_stat1 = lm_result.summary()
+print(report_lm_stat1)
+
+print(f"""
+      Summary Statistics:
+      AIC: {lm_result.aic.round(2)}
+      BIC: {lm_result.bic.round(2)}
+      """)
+    
+print(f"""
+      Pvalues:
+      {lm_result.pvalues.sort_values(ascending = False).round(3)}
+      """)
+    
+print(""" 
+Significant variables based on low p-values:
+    popularity                   
+    alive_rate_culture         
+    male                        
+    super_title                  
+    isNoble                    
+    s_no                      
+    age                           
+    dateOfBirth                  
+    alive_rate_title             
+    alive_rate_house  
+
+more variables with more than |0.15| correlation:
+    book4_A_Feast_For_Crows        0.27
+    numDeadRelations              -0.19
+    book1_A_Game_Of_Thrones       -0.15
+
+decision: will use significant and relevant variables into regression model
+""")
+
+
+    
+################################################################################
+############################## Data Preparation 1 ############################
+    
+X = df.loc[:,['s_no',
+              'male',
+              'dateOfBirth',
+              'book1_A_Game_Of_Thrones',
+              'book4_A_Feast_For_Crows',
+              'isNoble',
+              'numDeadRelations',
+              'age',
+              'popularity',
+              'super_title',
+              'alive_rate_culture',
+              'alive_rate_title',
+              'alive_rate_house'
+              ]]
+y = df.loc[:,'isAlive']    
+
+
+
+############################### No Scaling ############################
+########################## Logistic Regression ###############################
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size = 0.1, 
+                                                    random_state = 508,
+                                                    stratify = y)
+
+param_log = {'C': np.arange(0.0001, 1.0, 0.00005),
+             'solver':['newton-cg', 'lbfgs', 'liblinear', 'sag', 'saga'],
+             'max_iter': np.arange(50,500,50),
+             'n_jobs':np.arange(1,10,1),
+             'multi_class':['ovr', 'multinomial', 'auto','warn']
+             }
+logreg = LogisticRegression(random_state = 523)
+ran_cv_log = RandomizedSearchCV(logreg, 
+                                param_log, 
+                                cv = 3, 
+                                random_state = 123)
+ran_cv_log.fit(X_train,y_train)
+
+print("Without Scaling Logistic Regression Parameters:", ran_cv_log.best_params_)
+print("Without Scaling Best Logistic Regression Scores:", ran_cv_log.best_score_)
+
+
+
+log_optimal = LogisticRegression(C= 0.6482000000000001,
+                                 solver='newton-cg',
+                                 max_iter = 350,
+                                 n_jobs = 7,
+                                 multi_class = 'ovr',
+                                 random_state = 523
+                                 )
+log_optimal.fit(X_train, y_train)
+log_optimal_pred = log_optimal.predict(X_test)
+log_train_score = log_optimal.score(X_train, y_train).round(3)
+log_test_score = log_optimal.score(X_test, y_test).round(3)
+print('Training Score', log_train_score)
+print('Testing Score:', log_test_score)
+print(confusion_matrix(y_true = y_test,
+                       y_pred = log_optimal_pred))
+
+
+"""
+Training Score 0.854
+Testing Score: 0.867
+"""
+
+
+
+#############################################################################
+######################## Data Preprocessing: Scaler #########################
+
+scaler = StandardScaler()
+scaler.fit(X)
+X_scaled = scaler.transform(X)
+X_scaled_df = pd.DataFrame(X_scaled)
+X_scaled_df.columns = X.columns
+
+
+
+################################## Scaled ##################################
+########################## KNN Classification ###############################
+
+X_train, X_test, y_train, y_test = train_test_split(X_scaled_df, y, 
+                                                     test_size = 0.1, 
+                                                     random_state = 508,
+                                                     stratify = y)
+
+n_neighbors = np.arange(1,50,1)
+algorithm = ['ball_tree','kd_tree','brute']
+leaf_size = np.arange(5,100,1)
+metric = ['minkowski','euclidean','manhattan']
+
+param = {'n_neighbors':n_neighbors,
+         'algorithm':algorithm,
+         'leaf_size':leaf_size,
+         'metric':metric,
+         }
+knn = KNeighborsClassifier()
+ran_cv = RandomizedSearchCV(knn, 
+                            param, 
+                            cv = 3, 
+                            n_iter = 500, 
+                            random_state = 123)
+ran_cv.fit(X_train,y_train)
+
+print("With Scaling KNN Parameters:", ran_cv.best_params_)
+print("With Scaling Best KNN Scores:", ran_cv.best_score_)
+
+
+
+knn_optimal = KNeighborsClassifier(n_neighbors = 13,
+                                   metric = 'manhattan',
+                                   leaf_size = 88,
+                                   algorithm = 'ball_tree'
+                                   )
+knn_optimal.fit(X_train, y_train)
+knn_optial_pred = knn_optimal.predict(X_test)
+optmial_train_score = knn_optimal.score(X_train, y_train).round(3)
+optmial_test_score = knn_optimal.score(X_test, y_test).round(3)
+print("Scaled optimal KNN Training Score:",optmial_train_score)
+print("Scaled optimal KNN Testing Score:",optmial_test_score)
+
+
+""" 
+KNN Training Score: 0.859
+KNN Testing Score: 0.831 
+"""
+
+
+
+#############################################################################
+######################## feature importance function ########################
+
+def plot_feature_importances(model, train = X_train, export = False):
+    fig, ax = plt.subplots(figsize=(12,9))
+    n_features = X_train.shape[1]
+    plt.barh(range(n_features), model.feature_importances_, align='center')
+    plt.yticks(pd.np.arange(n_features), train.columns)
+    plt.xlabel("Feature importance")
+    plt.ylabel("Feature")
+    
+    if export == True:
+        plt.savefig('Tree_Leaf_50_Feature_Importance.png')
+
+
+
+
+############################## Random Forest 1 #################################
+###############################################################################
+
+# drop dummy variables
+df = df.iloc[:,:34]
+X = df.drop(['name', 
+            'house', 
+            'culture',
+            'title', 
+            'mother', 
+            'father',
+            'spouse',
+            'heir',
+            'isAlive'], 
+            axis = 1)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size = 0.1, 
+                                                    random_state = 508,
+                                                    stratify = y)
+
+estimator_space = pd.np.arange(100, 1350, 250)
+leaf_space = pd.np.arange(1, 150, 15)
+criterion_space = ['gini', 'entropy']
+bootstrap_space = [True, False]
+warm_start_space = [True, False]
+
+
+param_grid = {'n_estimators' : estimator_space,
+              'min_samples_leaf' : leaf_space,
+              'criterion' : criterion_space,
+              'bootstrap' : bootstrap_space,
+              'warm_start' : warm_start_space
+              }
+
+full_forest_grid = RandomForestClassifier(max_depth = None, random_state = 508)
+full_forest_cv = RandomizedSearchCV(full_forest_grid, param_grid, cv = 3)
+full_forest_cv.fit(X_train, y_train)
+
+print("Random Forest Best Parameter:", full_forest_cv.best_params_)
+print("Random Forest Best Score:", full_forest_cv.best_score_.round(4))
+
+ 
+
+rf_optimal = RandomForestClassifier(bootstrap = False,
+                                    criterion = 'entropy',
+                                    min_samples_leaf = 16,
+                                    n_estimators = 350,
+                                    warm_start = True
+                                    )
+rf_optimal.fit(X_train, y_train)
+rf_optimal_pred = rf_optimal.predict(X_test)
+rf_optimal_train = rf_optimal.score(X_train, y_train).round(3)
+rf_optimal_test = rf_optimal.score(X_test, y_test).round(3)
+
+print('Training Score', rf_optimal_train)
+print('Testing Score:', rf_optimal_test)
+
+
+"""
+Training Score 0.895
+Testing Score: 0.862
+
+"""
+
+
+plot_feature_importances(rf_optimal,
+                         train = X_train,
+                         export = True)
+
+print("""
+Not important features:
+    super_name
+    isAliveHeir
+    isAliveFather
+    isAliveMother
+""")
+
+
+
+############################## Random Forest 2 #################################
+
+X = df.drop(['name', 
+            'house', 
+            'culture',
+            'title', 
+            'mother', 
+            'father',
+            'spouse',
+            'heir',
+            'super_name',
+            'isAliveHeir',
+            'isAliveFather',
+            'isAliveMother',
+            'isAlive'], 
+            axis = 1)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size = 0.1, 
+                                                    random_state = 508,
+                                                    stratify = y)
+
+estimator_space = pd.np.arange(100, 1350, 250)
+leaf_space = pd.np.arange(1, 150, 15)
+criterion_space = ['gini', 'entropy']
+bootstrap_space = [True, False]
+warm_start_space = [True, False]
+
+
+param_grid = {'n_estimators' : estimator_space,
+              'min_samples_leaf' : leaf_space,
+              'criterion' : criterion_space,
+              'bootstrap' : bootstrap_space,
+              'warm_start' : warm_start_space}
+
+full_forest_grid = RandomForestClassifier(max_depth = None, random_state = 508)
+full_forest_cv = RandomizedSearchCV(full_forest_grid, param_grid, cv = 3)
+full_forest_cv.fit(X_train, y_train)
+
+
+print("Random Forest Best Parameter:", full_forest_cv.best_params_)
+print("Random Forest Best Score:", full_forest_cv.best_score_.round(3))
+
+ 
+
+rf_optimal = RandomForestClassifier(bootstrap = True,
+                                    criterion = 'gini',
+                                    min_samples_leaf = 1,
+                                    n_estimators = 850,
+                                    warm_start = False)
+rf_optimal.fit(X_train, y_train)
+rf_optimal_pred = rf_optimal.predict(X_test)
+rf_optimal_train = rf_optimal.score(X_train, y_train).round(3)
+rf_optimal_test = rf_optimal.score(X_test, y_test).round(3)
+
+print('Training Score', rf_optimal_train)
+print('Testing Score:', rf_optimal_test)
+
+
+"""
+Training Score 1.0
+Testing Score: 0.862
+"""
+
+
+plot_feature_importances(rf_optimal,
+                         train = X_train,
+                         export = True)
+
+print(""" 
+Very Important Features:
+    alive_rate_house
+    alive_rate_title
+    popularity
+    book4_A_Feast_For_Crows
+    dateOfBirth
+    s_no
+
+Deleting too much variables cause overfitting.
+""")
+
+
+
+############################### Gredient Boost Machine 1 #################################
+################################################################################
+
+X = df.drop(['name', 
+            'house', 
+            'culture',
+            'title', 
+            'mother', 
+            'father',
+            'spouse',
+            'heir',
+            'isAlive'], 
+            axis = 1)
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, 
+                                                    test_size = 0.1, 
+                                                    random_state = 508,
+                                                    stratify = y)
+
+learn_space = pd.np.arange(0.1, 1.6, 0.1)
+estimator_space = pd.np.arange(50, 250, 50)
+depth_space = pd.np.arange(1, 10)
+criterion_space = ['friedman_mse', 'mse', 'mae']
+
+
+param_grid = {'learning_rate' : learn_space,
+              'max_depth' : depth_space,
+              'criterion' : criterion_space,
+              'n_estimators' : estimator_space}
+gbm_grid = GradientBoostingClassifier(random_state = 508)
+
+
+gbm_random_cv = RandomizedSearchCV(gbm_grid, 
+                                   param_grid, 
+                                   cv = 3,
+                                   n_iter = 50,
+                                   scoring = 'roc_auc')
+gbm_random_cv.fit(X_train, y_train)
+
+
+print("Tuned GBM Parameter:", gbm_random_cv.best_params_)
+print("Tuned GBM Accuracy:", gbm_random_cv.best_score_.round(4))
+
+
+
+
+gbm_optimal = GradientBoostingClassifier(n_estimators =200,
+                                         max_depth = 1,
+                                         criterion = 'friedman_mse',
+                                         learning_rate = 0.6,
+                                         random_state = 508
+                                         )
+gbm_optimal.fit(X_train, y_train)
+gbm_optimal_score = gbm_optimal.score(X_test, y_test)
+gbm_optimal_pred = gbm_optimal.predict(X_test)
+gbm_optimal_train = gbm_optimal.score(X_train, y_train).round(3)
+gmb_optimal_test  = gbm_optimal.score(X_test, y_test).round(3)
+
+print('Training Score', gbm_optimal_train)
+print('Testing Score:', gmb_optimal_test)
+
+
+"""
+Training Score 0.898
+Testing Score: 0.897
+"""
+
+
+
+
+plot_feature_importances(gbm_optimal,
+                         train = X_train,
+                         export = True)
+
+
+print(""" 
+Not That Important Feature:
+    super_title
+    super_culture
+    super_house
+    super_name
+    isNoble
+    isMarried
+    isAliveFather
+    book5_A_Dance_with_Dragons
+    book3_A_Storm_Of_Swords
+    book2_A_Clash_Of_Kings
+    male
+""")
+
+
+
+######################## Checking Final Model ###############################
+##############################################################################
+
+my_auc = roc_auc_score(y_test, gbm_optimal_pred)
+cv = cross_val_score(gbm_optimal, X, y, cv = 3).round(3)
+
+print(my_auc.round(3))
+print(pd.np.mean(cv).round(3))
+
+
+######################### Saving Predictions ########################
+##############################################################################
+
+gbm_pred_df = pd.DataFrame({'Actual' : y_test,
+                            'GBM_Predicted': gbm_optimal_pred})
+gbm_pred_df.to_excel("GBM_Predictions.xlsx")
